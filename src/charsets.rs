@@ -1,8 +1,12 @@
+use std::fmt::Display;
+
+use derive_more::{BitOr, BitOrAssign};
 use primitive_types::U256;
 
 use crate::UTnfa;
 
 /// Set of utf8-characters
+#[derive(Clone)]
 pub struct Utf8Charset {
     ranges: Vec<(char, char)>,
     invert: bool,
@@ -10,7 +14,7 @@ pub struct Utf8Charset {
 
 /// Set of single-byte characters, including `'\u{80}'..'\u{ff}'`.
 /// Multi-byte character can be represented as `Utf8Charset`
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug, BitOr, BitOrAssign)]
 pub struct Charset {
     c: U256,
 }
@@ -71,9 +75,15 @@ impl Charset {
     }
 }
 
-impl std::ops::BitOrAssign for Charset {
-    fn bitor_assign(&mut self, rhs: Self) {
-        self.c |= rhs.c;
+impl Display for Charset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for c in self.iter() {
+            match c {
+                b' '..b'\x7f' => write!(f, "{}", c as char)?,
+                _ => write!(f, "\\x{:02x}", c)?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -212,5 +222,95 @@ impl Into<UTnfa> for Utf8Charset {
             res.union(&multibyte_range(range.0, range.1));
         }
         res
+    }
+}
+
+#[cfg(test)]
+mod charset_test {
+    use super::*;
+
+    #[test]
+    fn charset_basic_test() {
+        let c = Charset::from_range((b'1', b'9'));
+        let v: Vec<u8> = c.iter().collect();
+        assert_eq!(v.as_slice(), b"123456789");
+        for i in 0..=255 {
+            assert_eq!(c.contains(i), i >= b'1' && i <= b'9');
+        }
+
+        let c = Charset::from_range((0, 255));
+        let v: Vec<u8> = c.iter().collect();
+        for i in 0..=255 {
+            assert!(c.contains(i));
+            assert_eq!(v[i as usize], i);
+        }
+
+        for i in 0..=255 {
+            assert_eq!(Charset::from_char(i).c, U256::one() << i);
+        }
+
+        assert_eq!(
+            Charset::from_range((0, 5)) | Charset::from_range((6, 10)),
+            Charset::from_range((0, 10))
+        );
+
+        assert_eq!(Charset::from_char(b'\x7f').to_string().as_str(), "\\x7f");
+        assert_eq!(Charset::from_char(b'a').to_string().as_str(), "a");
+    }
+
+    #[test]
+    fn char_ranges_test() {
+        // intersection
+        assert_eq!(intersect_ranges(('\x00', '\x01'), ('\x70', '\x73')), None);
+        assert_eq!(intersect_ranges(('\x00', '\x6f'), ('\x70', '\x73')), None);
+        assert_eq!(
+            intersect_ranges(('\x00', '\x70'), ('\x70', '\x73')),
+            Some(('\x70', '\x70'))
+        );
+        assert_eq!(
+            intersect_ranges(('\u{800}', '\u{800}'), ('\u{800}', '\u{800}')),
+            Some(('\u{800}', '\u{800}'))
+        );
+        assert_eq!(
+            intersect_ranges(('\u{800}', '\u{010000}'), ('\u{0}', '\u{805}')),
+            Some(('\u{800}', '\u{805}'))
+        );
+
+        // subtraction
+        assert_eq!(*subtract_ranges(&[('a', 'd')], &[('c', 'd')]), [('a', 'b')]);
+        assert_eq!(
+            *subtract_ranges(&[('a', 'z')], &[('c', 'd')]),
+            [('a', 'b'), ('e', 'z')]
+        );
+        assert_eq!(
+            *subtract_ranges(&[('a', 'z')], &[('c', 'd'), ('y', 'y')]),
+            [('a', 'b'), ('e', 'x'), ('z', 'z')]
+        );
+        assert_eq!(
+            *subtract_ranges(&[('a', 'z')], &[('c', 'd'), ('y', 'y'), ('x', 'z')]),
+            [('a', 'b'), ('e', 'w')]
+        );
+        assert_eq!(
+            *subtract_ranges(
+                &[('a', 'z')],
+                &[('c', 'd'), ('y', 'y'), ('x', 'z'), ('w', 'e')]
+            ),
+            [('a', 'b'), ('e', 'w')]
+        );
+        assert_eq!(
+            *subtract_ranges(
+                &[('a', 'z')],
+                &[('c', 'd'), ('y', 'y'), ('x', 'z'), ('w', 'e'), ('a', 'z')]
+            ),
+            []
+        );
+        assert_eq!(
+            *subtract_ranges(&[('\u{0}', '\u{10ffff}')], &[('\u{0}', '\u{10fffe}')]),
+            [('\u{10ffff}', '\u{10ffff}')]
+        );
+        assert_eq!(
+            *subtract_ranges(&[('\u{0}', '\u{10ffff}')], &[('\u{1}', '\u{10ffff}')]),
+            [('\u{0}', '\u{0}')]
+        );
     }
 }
