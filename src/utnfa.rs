@@ -1,7 +1,7 @@
-use crate::Charset;
+use crate::{Automata, Charset};
 
 /// Represents uncooked tagged nondetermitistic automata
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UTnfa {
     nodes: usize,
     begin: usize,
@@ -105,5 +105,52 @@ impl UTnfa {
         self.eps_edges.push((self.end, self.nodes, -1));
         self.end = self.nodes;
         self.nodes += 1
+    }
+}
+
+impl Automata for UTnfa {
+    fn begin(&self) -> usize {
+        self.begin
+    }
+
+    fn nodes(&self) -> usize {
+        self.nodes
+    }
+
+    fn is_final(&self, n: usize) -> bool {
+        n == self.end
+    }
+
+    fn list_edges(&self) -> impl Iterator<Item = (usize, usize, Option<u8>, isize)> {
+        self.edges
+            .iter()
+            .flat_map(|(a, b, c)| c.iter().map(|c| (*a, *b, Some(c), -1)))
+            .chain(self.eps_edges.iter().map(|(a, b, c)| (*a, *b, None, *c)))
+    }
+}
+
+impl<T: Automata> PartialEq<T> for UTnfa {
+    fn eq(&self, other: &T) -> bool {
+        Automata::eq(self, other)
+    }
+}
+
+#[cfg(test)]
+mod utnfa_test {
+    use super::*;
+    use crate::automata::SimpleAutomata;
+    use std::collections::HashSet;
+
+    #[test]
+    fn simple_test() {
+        assert_eq!(
+            UTnfa::empty(),
+            SimpleAutomata {
+                begin: 0,
+                nodes: 1,
+                finals: HashSet::new(),
+                edges: vec![]
+            }
+        );
     }
 }
